@@ -4,10 +4,32 @@
 
 .game-container {
     display: flex;
-    justify-content: center;
+    flex-direction: column;
     align-items: center;
     padding: 20px;
     border-radius: 10px;
+}
+
+.score-container {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 20px;
+    color: white;
+    font-size: 24px;
+}
+
+.pocketed-balls {
+    display: flex;
+    gap: 5px;
+    align-items: center;
+}
+
+.pocketed-ball {
+    width: 20px;
+    height: 20px;
+    border-radius: 50%;
+    border: 1px solid rgba(255, 255, 255, 0.3);
 }
 
 #poolTable {

@@ -7,6 +7,8 @@ const PoolGame = () => {
     const [power, setPower] = useState(0);
     const [isMoving, setIsMoving] = useState(false);
     const [score, setScore] = useState(0);
+    const [pocketedBalls, setPocketedBalls] = useState([]);
+    const [pocketingBalls, setPocketingBalls] = useState([]);
 
     // Initial cue ball position
     const INITIAL_CUE_POS = { x: 600, y: 200 };
@@ -52,6 +54,10 @@ const PoolGame = () => {
         top: 10 + ballRadius,
         bottom: 390 - ballRadius
     };
+
+    // Constants
+    const POCKET_RADIUS = 25; // Increased from 20
+    const POCKET_COLLISION_RADIUS = 28; // Slightly larger than visual radius for better detection
 
     // Improved collision detection
     const checkBallCollision = (ball1, ball2) => {
@@ -131,14 +137,24 @@ const PoolGame = () => {
         }
     };
 
-    // Check if a ball is in a pocket
-    const checkPocketCollision = (ballX, ballY) => {
-        return pockets.some(pocket => {
-            const dx = pocket.x - ballX;
-            const dy = pocket.y - ballY;
-            const distance = Math.sqrt(dx * dx + dy * dy);
-            return distance < 20; // Pocket radius
-        });
+    // Improved pocket collision detection
+    const checkPocketCollision = (x, y, prevX, prevY) => {
+        const steps = 5;
+        for (let i = 0; i <= steps; i++) {
+            const t = i / steps;
+            const checkX = prevX + (x - prevX) * t;
+            const checkY = prevY + (y - prevY) * t;
+            
+            for (const pocket of pockets) {
+                const dx = pocket.x - checkX;
+                const dy = pocket.y - checkY;
+                const distance = Math.sqrt(dx * dx + dy * dy);
+                if (distance < POCKET_COLLISION_RADIUS) {
+                    return true;
+                }
+            }
+        }
+        return false;
     };
 
     // Reset cue ball position
@@ -151,14 +167,93 @@ const PoolGame = () => {
         }
     };
 
+    // Update ball pocketing logic with safety checks
+    const handleBallPocketed = (ball) => {
+        setScore(prev => prev + 1); // Add score immediately
+
+        // Find the closest pocket
+        const closestPocket = pockets.reduce((closest, pocket) => {
+            const dx = pocket.x - ball.x;
+            const dy = pocket.y - ball.y;
+            const distance = Math.sqrt(dx * dx + dy * dy);
+            if (!closest || distance < closest.distance) {
+                return { pocket, distance };
+            }
+            return closest;
+        }, null);
+
+        if (closestPocket) {
+            setPocketingBalls(prev => [...prev, {
+                ...ball,
+                startTime: Date.now(),
+                pocket: closestPocket.pocket
+            }]);
+
+            // Remove the ball from pocketing animation after completion
+            setTimeout(() => {
+                setPocketingBalls(prev => prev.filter(b => b.id !== ball.id));
+                setPocketedBalls(prev => [...prev, ball]);
+            }, 500);
+        } else {
+            // Fallback: just add to pocketed balls immediately if no pocket found
+            setPocketedBalls(prev => [...prev, ball]);
+        }
+
+        return { ...ball, active: false };
+    };
+
+    // Animation for pocketing balls with safety checks
+    useEffect(() => {
+        if (pocketingBalls.length === 0) return;
+
+        let animationFrame;
+        const animate = () => {
+            setPocketingBalls(prev => prev.map(ball => {
+                // Safety check for required properties
+                if (!ball || !ball.pocket || !ball.startTime) {
+                    return ball;
+                }
+
+                const elapsed = Date.now() - ball.startTime;
+                const duration = 500;
+                
+                // Remove ball if animation is complete
+                if (elapsed >= duration) {
+                    return null;
+                }
+
+                const progress = elapsed / duration;
+                // Ensure we have valid coordinates before calculating
+                const startX = ball.x || 0;
+                const startY = ball.y || 0;
+                const endX = ball.pocket.x;
+                const endY = ball.pocket.y;
+
+                return {
+                    ...ball,
+                    x: startX + (endX - startX) * progress,
+                    y: startY + (endY - startY) * progress,
+                    radius: ballRadius * (1 - progress)
+                };
+            }).filter(Boolean)); // Remove any null entries
+
+            animationFrame = requestAnimationFrame(animate);
+        };
+
+        animationFrame = requestAnimationFrame(animate);
+        return () => {
+            if (animationFrame) {
+                cancelAnimationFrame(animationFrame);
+            }
+        };
+    }, [pocketingBalls]);
+
     useEffect(() => {
         const updateBallPosition = () => {
             if (!isMoving) return;
 
             let isAnyBallMoving = false;
-
-            // Update positions with smaller steps for better collision detection
-            const steps = 3; // Divide each frame into smaller steps
+            const steps = 3;
             const dtStep = 1 / steps;
 
             for (let step = 0; step < steps; step++) {
@@ -166,8 +261,13 @@ const PoolGame = () => {
                 let newX = ballPositionRef.current.x + ballVelocityRef.current.x * dtStep;
                 let newY = ballPositionRef.current.y + ballVelocityRef.current.y * dtStep;
 
-                // Check if cue ball fell in pocket
-                if (checkPocketCollision(newX, newY)) {
+                // Check if cue ball fell in pocket with path checking
+                if (checkPocketCollision(
+                    newX, 
+                    newY, 
+                    ballPositionRef.current.x, 
+                    ballPositionRef.current.y
+                )) {
                     resetCueBall();
                     isAnyBallMoving = true;
                     break;
@@ -199,9 +299,9 @@ const PoolGame = () => {
                     let newBallX = ball.x + ball.vx * dtStep;
                     let newBallY = ball.y + ball.vy * dtStep;
 
-                    if (checkPocketCollision(newBallX, newBallY)) {
-                        setScore(prev => prev + 1);
-                        return { ...ball, active: false };
+                    // Check if ball fell in pocket with path checking
+                    if (checkPocketCollision(newBallX, newBallY, ball.x, ball.y)) {
+                        return handleBallPocketed(ball);
                     }
 
                     // Wall collisions
@@ -405,7 +505,18 @@ const PoolGame = () => {
 
     return (
         <div className="game-container">
-            <div className="score">Score: {score}</div>
+            <div className="score-container">
+                <span>Score: {score}</span>
+                <div className="pocketed-balls">
+                    {pocketedBalls.map((ball, index) => (
+                        <div
+                            key={`pocketed-${ball.id}-${index}`}
+                            className="pocketed-ball"
+                            style={{ backgroundColor: ball.color }}
+                        />
+                    ))}
+                </div>
+            </div>
             <svg 
                 id="poolTable" 
                 width="800" 
@@ -439,13 +550,13 @@ const PoolGame = () => {
                     </>
                 )}
                 
-                {/* Pockets */}
+                {/* Pockets with increased size */}
                 {pockets.map((pocket, index) => (
                     <circle 
                         key={index}
                         cx={pocket.x}
                         cy={pocket.y}
-                        r="20"
+                        r={POCKET_RADIUS}
                         fill="#2c3e50"
                     />
                 ))}
@@ -459,6 +570,18 @@ const PoolGame = () => {
                         cx={ball.x}
                         cy={ball.y}
                         r="15"
+                        fill={ball.color}
+                    />
+                ))}
+
+                {/* Balls being pocketed with animation */}
+                {pocketingBalls.filter(ball => ball && ball.radius > 0).map(ball => (
+                    <circle
+                        key={`pocketing-${ball.id}`}
+                        className="ball"
+                        cx={ball.x}
+                        cy={ball.y}
+                        r={ball.radius || ballRadius}
                         fill={ball.color}
                     />
                 ))}
